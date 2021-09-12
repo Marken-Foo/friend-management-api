@@ -66,6 +66,14 @@ class SqlQueries:
         WHERE e2.email = ?
         ;
     '''
+    
+    # subscribe user to target; subscriber is first, target is second
+    SUBSCRIBE_USER_TO_TARGET = '''INSERT INTO subscription
+        SELECT e1.email_id, e2.email_id
+        FROM email AS e1
+        INNER JOIN email AS e2
+        ON e1.email = ? AND e2.email = ?
+    '''
 
 
 def connect_to_db(db_path=DB_NAME):
@@ -75,6 +83,10 @@ def connect_to_db(db_path=DB_NAME):
 
 def create_json_response(is_success=False, **kwargs):
     return jsonify({"success": is_success, **kwargs})
+
+
+def respond_success():
+    return create_json_response(is_success=True)
 
 
 def respond_no_json_received():
@@ -111,9 +123,9 @@ def are_users_friends(conn, email1, email2):
     return res
 
 
-def are_users_blocking(conn, email1, email2):
+def are_users_blocking(conn, blocker, blocked):
     cur = conn.cursor()
-    cur.execute(SqlQueries.CHECK_IF_BLOCKING, (email1, email2)
+    cur.execute(SqlQueries.CHECK_IF_BLOCKING, (blocker, blocked)
     )
     res = cur.fetchone() is not None
     cur.close()
@@ -146,7 +158,7 @@ def add_email():
         cur = conn.cursor()
         cur.execute(SqlQueries.ADD_EMAIL, (email,))
         conn.commit()
-        return create_json_response(is_success=True)
+        return respond_success()
     except sqlite3.IntegrityError as err:
         message = err.args[0]
         if "unique constraint" in message.lower():
@@ -197,7 +209,7 @@ def add_friends():
                     (emails[0], emails[1]),
                 )
                 conn.commit()
-                return create_json_response(is_success=True)
+                return respond_success()
             except sqlite3.IntegrityError as err:
                 message = err.args[0]
                 # We had checked for existing friend connection already
@@ -229,7 +241,7 @@ def remove_friends():
         cur = conn.cursor()
         cur.execute(SqlQueries.UNFRIEND, (emails[0], emails[1], emails[0], emails[1]))
         conn.commit()
-        return create_json_response(is_success=True)
+        return respond_success()
 
 
 @app.get("/friend_list")
@@ -307,11 +319,38 @@ def subscribe_requestor_to_target():
             error="No email addresses received (JSON keys should be 'requestor'"
             "and 'target' for respective email addresses)"
         )
-    # check if are emails, if both in db
-    # if requestor has blocked target, respond
-    # if requestor has already subscribed to target, respond
-    # else update db and respond
-    return "subscribe"
+    if (not is_email_valid(req_email)) or (not is_email_valid(target_email)):
+        return respond_invalid_email_received()
+    with connect_to_db() as conn:
+        if not (does_email_exist(conn, req_email)
+            and does_email_exist(conn, target_email)
+        ):
+            return create_json_response(is_success=False,
+                error="One or both of the provided emails does not exist."
+            )
+        # if requestor has blocked target, do not create subscription
+        elif are_users_blocking(conn, blocker=req_email, blocked=target_email):
+            return create_json_response(is_success=False,
+                error="Requestor has blocked target, please unblock first"
+            )
+        else:
+            try:
+                cur = conn.cursor()
+                cur.execute(SqlQueries.SUBSCRIBE_USER_TO_TARGET,
+                    (req_email, target_email)
+                )
+                conn.commit()
+                return respond_success()
+            except sqlite3.IntegrityError as err:
+                message = err.args[0]
+                if "unique constraint" in message.lower():
+                    return create_json_response(is_success=False,
+                        error="User already subscribed"
+                    )
+                else:
+                    return create_json_response(is_success=False,
+                        error="Unexpected SQLite integrity error"
+                    )
 
 
 @app.post("/unsubscribe")
