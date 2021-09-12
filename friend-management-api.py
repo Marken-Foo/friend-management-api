@@ -3,8 +3,17 @@ import sqlite3
 from flask import Flask, jsonify, request
 
 
+DB_NAME = "users.db"
+
 app = Flask(__name__)
-conn_users = sqlite3.connect("users.db")
+conn_users = sqlite3.connect(DB_NAME)
+
+
+@app.post("/users")
+def add_email():
+    # check if email
+    # add to db and respond
+    return "add email"
 
 
 @app.post("/friend")
