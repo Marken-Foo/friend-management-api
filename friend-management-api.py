@@ -74,6 +74,16 @@ class SqlQueries:
         INNER JOIN email AS e2
         ON e1.email = ? AND e2.email = ?
     '''
+    
+    # unsubscribe user from target; subscriber is first, target is second
+    UNSUBSCRIBE_USER_FROM_TARGET = '''DELETE FROM subscription
+        WHERE (subscriber_email_id, target_email_id) IN (
+            SELECT subscriber_email_id, target_email_id FROM subscription
+            INNER JOIN email AS e1 ON subscription.subscriber_email_id = e1.email_id
+            INNER JOIN email AS e2 ON subscription.target_email_id = e2.email_id
+            WHERE e1.email = ? AND e2.email = ?
+        );
+    '''
 
 
 def connect_to_db(db_path=DB_NAME):
@@ -355,10 +365,26 @@ def subscribe_requestor_to_target():
 
 @app.post("/unsubscribe")
 def unsubscribe_requestor_from_target():
-    # check if are emails, if both in db
-    # if requestor is not subscribed to target, respond
-    # else update db and respond
-    return "unsubscribe"
+    req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
+    try:
+        req_email = req["requestor"]
+        target_email = req["target"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email addresses received (JSON keys should be 'requestor'"
+            "and 'target' for respective email addresses)"
+        )
+    if (not is_email_valid(req_email)) or (not is_email_valid(target_email)):
+        return respond_invalid_email_received()
+    with connect_to_db() as conn:
+        cur = conn.cursor()
+        cur.execute(SqlQueries.UNSUBSCRIBE_USER_FROM_TARGET,
+            (req_email, target_email)
+        )
+        conn.commit()
+        return respond_success()
 
 
 @app.post("/block")
