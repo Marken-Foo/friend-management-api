@@ -32,6 +32,9 @@ class SqlQueries:
     # add email to database
     ADD_EMAIL = "INSERT INTO email (email) VALUES (?);"
     
+    # check if email in database
+    CHECK_IF_EXISTS = "SELECT * FROM email WHERE email.email = ?;"
+    
     # establish friend connection
     ESTABLISH_FRIEND_CONNECTION = '''INSERT INTO friend (email_id1, email_id2)
         SELECT e1.email_id, e2.email_id
@@ -49,6 +52,19 @@ class SqlQueries:
             INNER JOIN email AS e2 ON friend.email_id2 = e2.email_id
             WHERE (e1.email = ? AND e2.email = ?) OR (e2.email = ? AND e1.email = ?)
         );
+    '''
+    
+    # get friend list of user
+    GET_FRIEND_LIST = '''SELECT e2.email FROM friend
+        INNER JOIN email AS e1 ON friend.email_id1 = e1.email_id
+        INNER JOIN email AS e2 ON friend.email_id2 = e2.email_id
+        WHERE e1.email = ?
+        UNION
+        SELECT e1.email FROM friend
+        INNER JOIN email AS e1 ON friend.email_id1 = e1.email_id
+        INNER JOIN email AS e2 ON friend.email_id2 = e2.email_id
+        WHERE e2.email = ?
+        ;
     '''
 
 
@@ -192,10 +208,31 @@ def remove_friends():
 
 @app.get("/friend_list")
 def get_friends_of_user():
-    # check if is email
-    # if not in db, respond
-    # else generate friends list from db and respond
-    return "friendlist"
+    req = request.get_json()
+    try:
+        email = req["email"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email address received (JSON key should be 'email')"
+        )
+    if not is_email_valid(email):
+        return create_json_response(is_success=False,
+            error="Invalid email address received"
+        )
+    with connect_to_db() as conn:
+        cur = conn.cursor()
+        cur.execute(SqlQueries.CHECK_IF_EXISTS, (email,))
+        if cur.fetchone() is None:
+            return create_json_response(is_success=False,
+                error="Email does not exist"
+            )
+        else:
+            cur.execute(SqlQueries.GET_FRIEND_LIST, (email, email))
+            friend_list = cur.fetchall()
+            return create_json_response(is_success=True,
+                friends=friend_list,
+                count=len(friend_list)
+            )
 
 
 @app.get("/common_friends")
