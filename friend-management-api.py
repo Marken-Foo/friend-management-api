@@ -1,9 +1,11 @@
+import re
 import sqlite3
 
 from flask import Flask, jsonify, request
 
 
 DB_NAME = "users.db"
+EMAIL_REGEX = re.compile(r"[\w\-\.]+@[\w\-]+(?:\.[\w]+)+")
 
 app = Flask(__name__)
 
@@ -13,31 +15,48 @@ def connect_to_db(db_path=DB_NAME):
     return con
 
 
+def create_json_response(is_success, **kwargs):
+    return jsonify({"success": is_success, **kwargs})
+
+
+def is_email_valid(email_str):
+    """Validate email address. Currently only checks against a simple regex.
+    """
+    match = EMAIL_REGEX.fullmatch(email_str)
+    return match is not None
+
+
 @app.post("/users")
 def add_email():
     req = request.get_json()
     try:
         email = req["email"]
     except KeyError:
-        return jsonify({"success": False, "error": "No email address received"})
-    # should also check if email is valid
+        return create_json_response(is_success=False,
+            error="No email address received"
+        )
+    if not is_email_valid(email):
+        return create_json_response(is_success=False,
+            error="Invalid email address received"
+        )
     conn = connect_to_db()
     cur = conn.cursor()
     try:
         cur.execute("INSERT INTO email (email) VALUES (?);", (email,))
         conn.commit()
-        return jsonify({"success": True})
+        return create_json_response(is_success=True)
     except sqlite3.IntegrityError as err:
         message = err.args[0]
-        if "not null" in message.lower():
-            return jsonify({"success": False, "error": "Null value for email received"})
-        elif "unique constraint" in message.lower():
-            return jsonify({"success": False, "error": "Email already exists"})
+        if "unique constraint" in message.lower():
+            return create_json_response(is_success=False,
+                error="Email already exists"
+            )
         else:
-            return jsonify({"success": False, "error": "Unexpected SQLite integrity error"})
+            return create_json_response(is_success=False,
+                error="Unexpected SQLite integrity error"
+            )
     finally:
         conn.close()
-    # add to db and respond"
 
 
 @app.post("/friend")
