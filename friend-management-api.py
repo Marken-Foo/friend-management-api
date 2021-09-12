@@ -6,14 +6,38 @@ from flask import Flask, jsonify, request
 DB_NAME = "users.db"
 
 app = Flask(__name__)
-conn_users = sqlite3.connect(DB_NAME)
+
+
+def connect_to_db(db_path=DB_NAME):
+    con = sqlite3.connect(db_path)
+    return con
 
 
 @app.post("/users")
 def add_email():
-    # check if email
-    # add to db and respond
-    return "add email"
+    req = request.get_json()
+    try:
+        email = req["email"]
+    except KeyError:
+        return jsonify({"success": False, "error": "No email address received"})
+    # should also check if email is valid
+    conn = connect_to_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO email (email) VALUES (?);", (email,))
+        conn.commit()
+        return jsonify({"success": True})
+    except sqlite3.IntegrityError as err:
+        message = err.args[0]
+        if "not null" in message.lower():
+            return jsonify({"success": False, "error": "Null value for email received"})
+        elif "unique constraint" in message.lower():
+            return jsonify({"success": False, "error": "Email already exists"})
+        else:
+            return jsonify({"success": False, "error": "Unexpected SQLite integrity error"})
+    finally:
+        conn.close()
+    # add to db and respond"
 
 
 @app.post("/friend")
