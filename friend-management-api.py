@@ -84,6 +84,14 @@ def is_email_valid(email_str):
     return match is not None
 
 
+def does_email_exist(conn, email):
+    cur = conn.cursor()
+    cur.execute(SqlQueries.CHECK_IF_EXISTS, (email,))
+    res = cur.fetchone() is not None
+    cur.close()
+    return res
+
+
 def are_users_friends(conn, email1, email2):
     cur = conn.cursor()
     cur.execute(SqlQueries.CHECK_IF_FRIENDS, (email1, email2, email1, email2)
@@ -100,6 +108,14 @@ def are_users_blocking(conn, email1, email2):
     res = cur.fetchone() is not None
     cur.close()
     return res
+
+
+def get_friend_list(conn, email):
+    cur = conn.cursor()
+    cur.execute(SqlQueries.GET_FRIEND_LIST, (email, email))
+    friend_list = cur.fetchall()
+    cur.close()
+    return friend_list
 
 
 @app.post("/users")
@@ -220,27 +236,51 @@ def get_friends_of_user():
             error="Invalid email address received"
         )
     with connect_to_db() as conn:
-        cur = conn.cursor()
-        cur.execute(SqlQueries.CHECK_IF_EXISTS, (email,))
-        if cur.fetchone() is None:
-            return create_json_response(is_success=False,
-                error="Email does not exist"
-            )
-        else:
-            cur.execute(SqlQueries.GET_FRIEND_LIST, (email, email))
-            friend_list = cur.fetchall()
+        if does_email_exist(conn, email):
+            friend_list = get_friend_list(conn, email)
             return create_json_response(is_success=True,
                 friends=friend_list,
                 count=len(friend_list)
+            )
+        else:
+            return create_json_response(is_success=False,
+                error="Email does not exist"
             )
 
 
 @app.get("/common_friends")
 def get_common_friends():
-    # check if length 2, if are emails, if both in db
-    # generate common friends list from db
-    # respond (including count, if successful)
-    return "common friends"
+    req = request.get_json()
+    try:
+        emails = req["friends"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email addresses received (JSON key should be 'friends', "
+            "email addresses should be in array value)"
+        )
+    # Take just first two emails from json array only if they are valid
+    if ((len(emails) < 2)
+        or (not is_email_valid(emails[0]))
+        or (not is_email_valid(emails[1]))
+    ):
+        return create_json_response(is_success=False,
+            error="Two valid email addresses required"
+        )
+    with connect_to_db() as conn:
+        if (does_email_exist(conn, emails[0])
+            and does_email_exist(conn, emails[1])
+        ):
+            mutual_friends = set(get_friend_list(conn, emails[0])).intersection(
+                set(get_friend_list(conn, emails[1]))
+            )
+            return create_json_response(is_success=True,
+                friends=list(mutual_friends),
+                count=len(mutual_friends)
+            )
+        else:
+            return create_json_response(is_success=False,
+                error="One or both of the provided emails does not exist."
+            )
 
 
 @app.post("/subscribe")
