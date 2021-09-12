@@ -77,6 +77,16 @@ def create_json_response(is_success=False, **kwargs):
     return jsonify({"success": is_success, **kwargs})
 
 
+def respond_no_json_received():
+    return create_json_response(is_success=False, error="No JSON received")
+
+
+def respond_invalid_email_received():
+    return create_json_response(is_success=False,
+        error="Invalid email address received"
+    )
+
+
 def is_email_valid(email_str):
     """Validate email address. Currently only checks against a simple regex.
     """
@@ -121,6 +131,8 @@ def get_friend_list(conn, email):
 @app.post("/users")
 def add_email():
     req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
     try:
         email = req["email"]
     except KeyError:
@@ -128,9 +140,7 @@ def add_email():
             error="No email address received (JSON key should be 'email')"
         )
     if not is_email_valid(email):
-        return create_json_response(is_success=False,
-            error="Invalid email address received"
-        )
+        return respond_invalid_email_received()
     try:
         conn = connect_to_db()
         cur = conn.cursor()
@@ -154,6 +164,8 @@ def add_email():
 @app.post("/friend")
 def add_friends():
     req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
     try:
         emails = req["friends"]
     except KeyError:
@@ -162,14 +174,12 @@ def add_friends():
             "email addresses should be in array value)"
         )
     # Take just first two emails from json array only if they are valid
-    if ((len(emails) < 2)
-        or emails[0] == emails[1]
-        or (not is_email_valid(emails[0]))
-        or (not is_email_valid(emails[1]))
-    ):
+    if ((len(emails) < 2) or emails[0] == emails[1]):
         return create_json_response(is_success=False,
             error="Two distinct valid email addresses required"
         )
+    if (not is_email_valid(emails[0])) or (not is_email_valid(emails[1])):
+        return respond_invalid_email_received()
     with connect_to_db() as conn:
         if are_users_blocking(conn, emails[0], emails[1]):
             return create_json_response(is_success=False,
@@ -199,6 +209,8 @@ def add_friends():
 @app.post("/unfriend")
 def remove_friends():
     req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
     try:
         emails = req["friends"]
     except KeyError:
@@ -207,14 +219,12 @@ def remove_friends():
             "email addresses should be in array value)"
         )
     # Take just first two emails from json array only if they are valid
-    if ((len(emails) < 2)
-        or emails[0] == emails[1]
-        or (not is_email_valid(emails[0]))
-        or (not is_email_valid(emails[1]))
-    ):
+    if ((len(emails) < 2) or emails[0] == emails[1]):
         return create_json_response(is_success=False,
             error="Two distinct valid email addresses required"
         )
+    if (not is_email_valid(emails[0])) or (not is_email_valid(emails[1])):
+        return respond_invalid_email_received()
     with connect_to_db() as conn:
         cur = conn.cursor()
         cur.execute(SqlQueries.UNFRIEND, (emails[0], emails[1], emails[0], emails[1]))
@@ -225,6 +235,8 @@ def remove_friends():
 @app.get("/friend_list")
 def get_friends_of_user():
     req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
     try:
         email = req["email"]
     except KeyError:
@@ -232,9 +244,7 @@ def get_friends_of_user():
             error="No email address received (JSON key should be 'email')"
         )
     if not is_email_valid(email):
-        return create_json_response(is_success=False,
-            error="Invalid email address received"
-        )
+        return respond_invalid_email_received()
     with connect_to_db() as conn:
         if does_email_exist(conn, email):
             friend_list = get_friend_list(conn, email)
@@ -251,6 +261,8 @@ def get_friends_of_user():
 @app.get("/common_friends")
 def get_common_friends():
     req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
     try:
         emails = req["friends"]
     except KeyError:
@@ -259,13 +271,12 @@ def get_common_friends():
             "email addresses should be in array value)"
         )
     # Take just first two emails from json array only if they are valid
-    if ((len(emails) < 2)
-        or (not is_email_valid(emails[0]))
-        or (not is_email_valid(emails[1]))
-    ):
+    if len(emails) < 2:
         return create_json_response(is_success=False,
-            error="Two valid email addresses required"
+            error="Two distinct valid email addresses required"
         )
+    if (not is_email_valid(emails[0])) or (not is_email_valid(emails[1])):
+        return respond_invalid_email_received()
     with connect_to_db() as conn:
         if (does_email_exist(conn, emails[0])
             and does_email_exist(conn, emails[1])
@@ -285,6 +296,17 @@ def get_common_friends():
 
 @app.post("/subscribe")
 def subscribe_requestor_to_target():
+    req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
+    try:
+        req_email = req["requestor"]
+        target_email = req["target"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email addresses received (JSON keys should be 'requestor'"
+            "and 'target' for respective email addresses)"
+        )
     # check if are emails, if both in db
     # if requestor has blocked target, respond
     # if requestor has already subscribed to target, respond
