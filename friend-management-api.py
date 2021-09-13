@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 
 
 DB_NAME = "users.db"
-EMAIL_REGEX = re.compile(r"[\w\-\.]+@[\w\-]+(?:\.[\w]+)+")
+EMAIL_REGEX = re.compile(r"([\w\-\.]+@[\w\-]+(?:\.[\w]+)+)")
 
 app = Flask(__name__)
 
@@ -71,6 +71,22 @@ class SqlQueries:
         SELECT e1.email FROM friend
         INNER JOIN email AS e1 ON friend.email_id1 = e1.email_id
         INNER JOIN email AS e2 ON friend.email_id2 = e2.email_id
+        WHERE e2.email = ?
+        ;
+    '''
+    
+    # get subscriber list of user
+    GET_SUBSCRIBER_LIST = '''SELECT e1.email FROM subscription
+        INNER JOIN email AS e1 ON subscription.subscriber_email_id = e1.email_id
+        INNER JOIN email AS e2 ON subscription.target_email_id = e2.email_id
+        WHERE e2.email = ?
+        ;
+    '''
+    
+    # get list of users who block provided user
+    GET_BLOCKER_LIST = '''SELECT e1.email FROM block
+        INNER JOIN email AS e1 ON block.blocker_email_id = e1.email_id
+        INNER JOIN email AS e2 ON block.blocked_email_id = e2.email_id
         WHERE e2.email = ?
         ;
     '''
@@ -180,6 +196,22 @@ def get_friend_list(conn, email):
     friend_list = cur.fetchall()
     cur.close()
     return friend_list
+
+
+def get_subscriber_list(conn, email):
+    cur = conn.cursor()
+    cur.execute(SqlQueries.GET_SUBSCRIBER_LIST, (email,))
+    subscriber_list = cur.fetchall()
+    cur.close()
+    return subscriber_list
+
+
+def get_blocker_list(conn, email):
+    cur = conn.cursor()
+    cur.execute(SqlQueries.GET_BLOCKER_LIST, (email,))
+    blocker_list = cur.fetchall()
+    cur.close()
+    return blocker_list
 
 
 @app.post("/users")
@@ -496,11 +528,32 @@ def unblock_target_by_requestor():
 
 @app.get("/notified")
 def get_recipients_of_update():
-    # check if sender is email, in db
-    # search text for emails
-    # if text contains emails, check if in db
-    # get friends from db
-    # get subscribers from db
-    # get blocked from db
-    # respond
-    return "notified"
+    req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
+    try:
+        sender_email = req["sender"]
+        text = req["text"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="JSON keys should be 'sender' for sender email and 'text' "
+            "for message text"
+        )
+    if not is_email_valid(sender_email):
+        return respond_invalid_email_received()
+    mentions = re.findall(EMAIL_REGEX, text)
+    
+    with connect_to_db() as conn:
+        if not does_email_exist(conn, sender_email):
+            return create_json_response(is_success=False,
+                error="Sender email does not exist"
+            )
+        notified_emails = (
+            set(get_friend_list(conn, sender_email))
+            .union(set(get_subscriber_list(conn, sender_email)))
+            .union(set((email for email in mentions if does_email_exist(conn, email))))
+        )
+        notified_emails = notified_emails - set(get_blocker_list(conn, sender_email))
+        return create_json_response(is_success=True,
+            recipients=list(notified_emails)
+        )
