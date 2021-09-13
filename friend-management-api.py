@@ -29,6 +29,14 @@ class SqlQueries:
         ;
     '''
     
+    # check if user A is subscribed to user B
+    CHECK_IF_SUBSCRIBED = '''SELECT * FROM subscription 
+        INNER JOIN email AS e1 ON subscription.subscriber_email_id = e1.email_id
+        INNER JOIN email AS e2 ON subscription.target_email_id = e2.email_id
+        WHERE e1.email = ? AND e2.email = ?
+        ;
+    '''
+    
     # add email to database
     ADD_EMAIL = "INSERT INTO email (email) VALUES (?);"
     
@@ -84,6 +92,24 @@ class SqlQueries:
             WHERE e1.email = ? AND e2.email = ?
         );
     '''
+    
+    # block target; requestor is first, target is second
+    BLOCK_USER_TARGET = '''INSERT INTO block
+        SELECT e1.email_id, e2.email_id
+        FROM email AS e1
+        INNER JOIN email AS e2
+        ON e1.email = ? AND e2.email = ?
+    '''
+    
+    # unblock target; requestor is first, target is second
+    UNBLOCK_USER_TARGET = '''DELETE FROM block
+        WHERE (blocker_email_id, blocked_email_id) IN (
+            SELECT blocker_email_id, blocked_email_id FROM block
+            INNER JOIN email AS e1 ON block.blocker_email_id = e1.email_id
+            INNER JOIN email AS e2 ON block.blocked_email_id = e2.email_id
+            WHERE e1.email = ? AND e2.email = ?
+        );
+    '''
 
 
 def connect_to_db(db_path=DB_NAME):
@@ -126,8 +152,7 @@ def does_email_exist(conn, email):
 
 def are_users_friends(conn, email1, email2):
     cur = conn.cursor()
-    cur.execute(SqlQueries.CHECK_IF_FRIENDS, (email1, email2, email1, email2)
-    )
+    cur.execute(SqlQueries.CHECK_IF_FRIENDS, (email1, email2, email1, email2))
     res = cur.fetchone() is not None
     cur.close()
     return res
@@ -135,8 +160,15 @@ def are_users_friends(conn, email1, email2):
 
 def are_users_blocking(conn, blocker, blocked):
     cur = conn.cursor()
-    cur.execute(SqlQueries.CHECK_IF_BLOCKING, (blocker, blocked)
-    )
+    cur.execute(SqlQueries.CHECK_IF_BLOCKING, (blocker, blocked))
+    res = cur.fetchone() is not None
+    cur.close()
+    return res
+
+
+def is_user_subscribed(conn, user, target):
+    cur = conn.cursor()
+    cur.execute(SqlQueries.CHECK_IF_SUBSCRIBED, (user, target))
     res = cur.fetchone() is not None
     cur.close()
     return res
@@ -389,13 +421,77 @@ def unsubscribe_requestor_from_target():
 
 @app.post("/block")
 def block_target_by_requestor():
-    # check for requestor and target, check if emails
-    # if requestor has already blocked target, respond
-    # if requestor is friend with target, respond
-    # if requestor is subscribed to target, respond
-    # update db
-    # respond
-    return "block"
+    req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
+    try:
+        req_email = req["requestor"]
+        target_email = req["target"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email addresses received (JSON keys should be 'requestor'"
+            "and 'target' for respective email addresses)"
+        )
+    if (not is_email_valid(req_email)) or (not is_email_valid(target_email)):
+        return respond_invalid_email_received()
+    with connect_to_db() as conn:
+        if not (does_email_exist(conn, req_email)
+            and does_email_exist(conn, target_email)
+        ):
+            return create_json_response(is_success=False,
+                error="One or both of the provided emails does not exist."
+            )
+        if are_users_friends(conn, req_email, target_email):
+            return create_json_response(is_success=False,
+                error="Users are friends (unfriend the target first)"
+            )
+        if is_user_subscribed(conn, req_email, target_email):
+            return create_json_response(is_success=False,
+                error="Requestor is subscribed to target (unsubscribe from "
+                "target first)"
+            )
+        else:
+            try:
+                cur = conn.cursor()
+                cur.execute(SqlQueries.BLOCK_USER_TARGET,
+                    (req_email, target_email)
+                )
+                conn.commit()
+                return respond_success()
+            except sqlite3.IntegrityError as err:
+                message = err.args[0]
+                if "unique constraint" in message.lower():
+                    return create_json_response(is_success=False,
+                        error="User already blocked target"
+                    )
+                else:
+                    return create_json_response(is_success=False,
+                        error="Unexpected SQLite integrity error"
+                    )
+
+
+@app.post("/unblock")
+def unblock_target_by_requestor():
+    req = request.get_json()
+    if req is None:
+        return respond_no_json_received()
+    try:
+        req_email = req["requestor"]
+        target_email = req["target"]
+    except KeyError:
+        return create_json_response(is_success=False,
+            error="No email addresses received (JSON keys should be 'requestor'"
+            "and 'target' for respective email addresses)"
+        )
+    if (not is_email_valid(req_email)) or (not is_email_valid(target_email)):
+        return respond_invalid_email_received()
+    with connect_to_db() as conn:
+        cur = conn.cursor()
+        cur.execute(SqlQueries.UNBLOCK_USER_TARGET,
+            (req_email, target_email)
+        )
+        conn.commit()
+        return respond_success()
 
 
 @app.get("/notified")
