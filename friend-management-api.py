@@ -193,7 +193,7 @@ def is_user_subscribed(conn, user, target):
 def get_friend_list(conn, email):
     cur = conn.cursor()
     cur.execute(SqlQueries.GET_FRIEND_LIST, (email, email))
-    friend_list = cur.fetchall()
+    friend_list = [item[0] for item in cur.fetchall()]
     cur.close()
     return friend_list
 
@@ -201,7 +201,7 @@ def get_friend_list(conn, email):
 def get_subscriber_list(conn, email):
     cur = conn.cursor()
     cur.execute(SqlQueries.GET_SUBSCRIBER_LIST, (email,))
-    subscriber_list = cur.fetchall()
+    subscriber_list = [item[0] for item in cur.fetchall()]
     cur.close()
     return subscriber_list
 
@@ -209,7 +209,7 @@ def get_subscriber_list(conn, email):
 def get_blocker_list(conn, email):
     cur = conn.cursor()
     cur.execute(SqlQueries.GET_BLOCKER_LIST, (email,))
-    blocker_list = cur.fetchall()
+    blocker_list = [item[0] for item in cur.fetchall()]
     cur.close()
     return blocker_list
 
